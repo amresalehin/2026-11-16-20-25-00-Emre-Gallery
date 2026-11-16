@@ -2462,83 +2462,117 @@ fun FullScreenBrowserView(
                         }
                     }
 
-                    // Media items list
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 380.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(filteredItems) { item ->
-                            val isSelected = item.id in selectedItemIds
-                            Surface(
-                                onClick = {
-                                    selectedItemIds = if (isSelected) selectedItemIds - item.id else selectedItemIds + item.id
+                    // Media items list or empty state
+                    if (filteredItems.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp, horizontal = 16.dp)
+                                .testTag("browser_discovered_empty_state"),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PermMedia,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Text(
+                                text = "No media discovered yet",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (currentUrl.isBlank()) {
+                                    "Open a webpage to automatically detect images, videos, and audio."
+                                } else {
+                                    "Scroll the webpage to load lazy media, or tap the scan button in the browser bar."
                                 },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 380.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filteredItems) { item ->
+                                val isSelected = item.id in selectedItemIds
+                                Surface(
+                                    onClick = {
+                                        selectedItemIds = if (isSelected) selectedItemIds - item.id else selectedItemIds + item.id
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    // Thumbnail / Icon preview
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        modifier = Modifier.size(48.dp)
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        if (item.category == MediaCategory.IMAGES) {
-                                            AsyncImage(
-                                                model = item.thumbnailUrl ?: item.url,
-                                                contentDescription = null,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                                Icon(
-                                                    imageVector = when {
-                                                        item.isStream -> Icons.Default.LiveTv
-                                                        item.isVideo -> Icons.Default.Videocam
-                                                        item.isAudio -> Icons.Default.Audiotrack
-                                                        else -> Icons.Default.Image
-                                                    },
+                                        // Thumbnail / Icon preview
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            if (item.category == MediaCategory.IMAGES) {
+                                                AsyncImage(
+                                                    model = item.thumbnailUrl ?: item.url,
                                                     contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(24.dp)
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
                                                 )
+                                            } else {
+                                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                                    Icon(
+                                                        imageVector = when {
+                                                            item.isStream -> Icons.Default.LiveTv
+                                                            item.isVideo -> Icons.Default.Videocam
+                                                            item.isAudio -> Icons.Default.Audiotrack
+                                                            else -> Icons.Default.Image
+                                                        },
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
                                             }
                                         }
-                                    }
 
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = item.title,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = "${item.category.label} • ${item.format}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    Checkbox(
-                                        checked = isSelected,
-                                        onCheckedChange = { checked ->
-                                            selectedItemIds = if (checked) selectedItemIds + item.id else selectedItemIds - item.id
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = item.title,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${item.category.label} • ${item.format}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
-                                    )
+
+                                        Checkbox(
+                                            checked = isSelected,
+                                            onCheckedChange = { checked ->
+                                                selectedItemIds = if (checked) selectedItemIds + item.id else selectedItemIds - item.id
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }

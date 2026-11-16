@@ -6,6 +6,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.webkit.*
 import androidx.activity.compose.BackHandler
@@ -76,6 +78,7 @@ fun DirectBrowserView(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val downloaderSettings by DownloaderPreferencesManager.settingsFlow(context)
         .collectAsState(initial = DownloaderPreferencesManager.getCachedSettings())
 
@@ -98,6 +101,13 @@ fun DirectBrowserView(
 
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
 
+    val latestCurrentUrl by rememberUpdatedState(currentUrl)
+    val latestPageTitle by rememberUpdatedState(pageTitle)
+    val latestOnUrlChange by rememberUpdatedState(onUrlChange)
+    val latestOnPageTitleChanged by rememberUpdatedState(onPageTitleChanged)
+    val latestOnMediaExtracted by rememberUpdatedState(onMediaExtracted)
+    val latestOnBatchExtracted by rememberUpdatedState(onBatchExtracted)
+
     LaunchedEffect(downloaderSettings.customUserAgent, webViewInstance) {
         val ua = downloaderSettings.customUserAgent.ifBlank {
             OkHttpDownloader.configuredUserAgent.ifBlank { OkHttpDownloader.DEFAULT_USER_AGENT }
@@ -107,6 +117,7 @@ fun DirectBrowserView(
 
     DisposableEffect(Unit) {
         onDispose {
+            mainHandler.removeCallbacksAndMessages(null)
             webViewInstance?.let { wv ->
                 wv.stopLoading()
                 wv.webViewClient = WebViewClient()
@@ -131,7 +142,7 @@ fun DirectBrowserView(
         val formatted = MediaClassifier.formatQueryOrUrl(trimmed, downloaderSettings.browserSearchEngine)
         addressInput = formatted
         currentUrl = formatted
-        onUrlChange?.invoke(formatted)
+        latestOnUrlChange?.invoke(formatted)
         coroutineScope.launch {
             historyManager.recordVisit(formatted)
         }
@@ -142,14 +153,14 @@ fun DirectBrowserView(
     fun scanCurrentPageDOM(wv: WebView?) {
         if (wv == null) return
         val current = wv.url ?: return
-        if (current.isBlank() || current == "about:blank" || currentUrl.isBlank()) return
+        if (current.isBlank() || current == "about:blank" || latestCurrentUrl.isBlank()) return
 
         wv.evaluateJavascript(MediaCaptureEngine.getJsDomScanScript()) { jsonRaw ->
             val discovered = MediaCaptureEngine.parseJsDomScanResult(jsonRaw, current)
             if (discovered.isNotEmpty()) {
-                val domain = runCatching { java.net.URL(current).host }.getOrDefault("")
-                onBatchExtracted(discovered, pageTitle, domain)
-                DownloaderSession.addDiscoveredItems(discovered, pageTitle)
+                val domain = runCatching { URL(current).host }.getOrDefault("")
+                latestOnBatchExtracted(discovered, latestPageTitle, domain)
+                DownloaderSession.addDiscoveredItems(discovered, latestPageTitle)
             }
         }
     }
@@ -160,7 +171,7 @@ fun DirectBrowserView(
             .testTag("direct_browser_view")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1. Browser Navigation and Address Bar
+            // 1. Clean Top Address Bar
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 tonalElevation = 3.dp,
@@ -169,14 +180,14 @@ fun DirectBrowserView(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     if (onClose != null) {
                         IconButton(
                             onClick = onClose,
-                            modifier = Modifier.size(36.dp).testTag("browser_close_btn")
+                            modifier = Modifier.size(40.dp).testTag("browser_close_btn")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
@@ -187,47 +198,20 @@ fun DirectBrowserView(
                         }
                     }
 
-                    // Navigation Controls: Back & Forward
-                    IconButton(
-                        onClick = { webViewInstance?.goBack() },
-                        enabled = canGoBack,
-                        modifier = Modifier.size(34.dp).testTag("browser_back_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = if (canGoBack) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = { webViewInstance?.goForward() },
-                        enabled = canGoForward,
-                        modifier = Modifier.size(34.dp).testTag("browser_forward_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Forward",
-                            tint = if (canGoForward) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-
                     // Interactive, Editable URL and Search Bar
                     Surface(
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(22.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                         modifier = Modifier
                             .weight(1f)
-                            .height(38.dp)
+                            .height(42.dp)
                             .testTag("browser_address_bar")
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 10.dp),
+                                .padding(horizontal = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             val isSecure = currentUrl.startsWith("https://", ignoreCase = true)
@@ -235,10 +219,10 @@ fun DirectBrowserView(
                                 imageVector = if (isSecure) Icons.Default.Lock else if (currentUrl.isNotBlank()) Icons.Default.Language else Icons.Default.Search,
                                 contentDescription = null,
                                 tint = if (isSecure) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(16.dp)
                             )
 
-                            Spacer(Modifier.width(6.dp))
+                            Spacer(Modifier.width(8.dp))
 
                             Box(
                                 modifier = Modifier.weight(1f),
@@ -249,7 +233,7 @@ fun DirectBrowserView(
                                         text = "Search or type URL",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        fontSize = 13.sp,
+                                        fontSize = 14.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -269,7 +253,7 @@ fun DirectBrowserView(
                                     ),
                                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 13.sp
+                                        fontSize = 14.sp
                                     ),
                                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                                     modifier = Modifier
@@ -281,26 +265,26 @@ fun DirectBrowserView(
                             if (addressInput.isNotEmpty()) {
                                 IconButton(
                                     onClick = { addressInput = "" },
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "Clear",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(14.dp)
+                                        modifier = Modifier.size(15.dp)
                                     )
                                 }
                             }
 
                             IconButton(
                                 onClick = { navigateToUrl(addressInput) },
-                                modifier = Modifier.size(24.dp).testTag("browser_go_btn")
+                                modifier = Modifier.size(28.dp).testTag("browser_go_btn")
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = "Go",
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
@@ -311,78 +295,23 @@ fun DirectBrowserView(
                         onClick = {
                             if (isLoading) {
                                 webViewInstance?.stopLoading()
-                            } else {
+                            } else if (currentUrl.isNotBlank()) {
                                 webViewInstance?.reload()
                             }
                         },
-                        modifier = Modifier.size(34.dp).testTag("browser_refresh_btn")
+                        enabled = isLoading || currentUrl.isNotBlank(),
+                        modifier = Modifier.size(40.dp).testTag("browser_refresh_btn")
                     ) {
                         Icon(
                             imageVector = if (isLoading) Icons.Default.Close else Icons.Default.Refresh,
                             contentDescription = if (isLoading) "Stop" else "Reload",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(19.dp)
+                            tint = if (isLoading || currentUrl.isNotBlank()) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            },
+                            modifier = Modifier.size(20.dp)
                         )
-                    }
-
-                    // Home button
-                    IconButton(
-                        onClick = {
-                            currentUrl = ""
-                            addressInput = ""
-                            pageTitle = ""
-                            onUrlChange?.invoke("")
-                            webViewInstance?.loadUrl("about:blank")
-                        },
-                        modifier = Modifier.size(34.dp).testTag("browser_home_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Home,
-                            contentDescription = "Home",
-                            tint = if (currentUrl.isBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-
-                    // Discovered Media count badge or Scan button
-                    if (discoveredCount > 0) {
-                        Surface(
-                            onClick = onSwitchToMediaTab,
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.height(32.dp).testTag("browser_media_badge_top")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PermMedia,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "$discoveredCount",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                    } else if (currentUrl.isNotBlank()) {
-                        IconButton(
-                            onClick = { scanCurrentPageDOM(webViewInstance) },
-                            modifier = Modifier.size(34.dp).testTag("browser_scan_page_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.TravelExplore,
-                                contentDescription = "Scan media",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
                     }
                 }
             }
@@ -447,14 +376,18 @@ fun DirectBrowserView(
 
                             addJavascriptInterface(
                                 BrowserMediaExtractor.EmreMediaBridge { rawUrl ->
+                                    val activePageUrl = latestCurrentUrl
+                                    if (activePageUrl.isBlank()) return@EmreMediaBridge
                                     val item = MediaCaptureEngine.buildMediaItem(
                                         rawUrl = rawUrl,
                                         source = ExtractionSource.DOM_SCRAPE,
-                                        baseUrl = currentUrl
+                                        baseUrl = activePageUrl
                                     )
                                     if (item != null) {
-                                        onMediaExtracted(item)
                                         DownloaderSession.addDiscoveredItem(item)
+                                        mainHandler.post {
+                                            latestOnMediaExtracted(item)
+                                        }
                                     }
                                 },
                                 "EmreBridge"
@@ -468,7 +401,7 @@ fun DirectBrowserView(
 
                                 override fun onReceivedTitle(view: WebView?, title: String?) {
                                     pageTitle = title.orEmpty()
-                                    onPageTitleChanged?.invoke(pageTitle)
+                                    latestOnPageTitleChanged?.invoke(pageTitle)
                                 }
                             }
 
@@ -579,11 +512,11 @@ fun DirectBrowserView(
                                             currentUrl = ""
                                             addressInput = ""
                                             pageTitle = ""
-                                            onUrlChange?.invoke("")
+                                            latestOnUrlChange?.invoke("")
                                         } else {
                                             currentUrl = it
                                             addressInput = it
-                                            onUrlChange?.invoke(it)
+                                            latestOnUrlChange?.invoke(it)
                                             view?.evaluateJavascript(MediaCaptureEngine.getNetworkHookScript(), null)
                                         }
                                     }
@@ -598,11 +531,11 @@ fun DirectBrowserView(
                                             currentUrl = ""
                                             addressInput = ""
                                             pageTitle = ""
-                                            onUrlChange?.invoke("")
+                                            latestOnUrlChange?.invoke("")
                                         } else {
                                             currentUrl = it
                                             addressInput = it
-                                            onUrlChange?.invoke(it)
+                                            latestOnUrlChange?.invoke(it)
                                             coroutineScope.launch {
                                                 historyManager.recordVisit(it, view?.title)
                                             }
@@ -640,7 +573,7 @@ fun DirectBrowserView(
                                     handler?.cancel()
                                     DownloaderDiagnostics.error(
                                         "DirectBrowserView",
-                                        "SSL error blocked for ${error?.url ?: currentUrl}: ${error?.primaryError}"
+                                        "SSL error blocked for ${error?.url ?: latestCurrentUrl}: ${error?.primaryError}"
                                     )
                                 }
 
@@ -650,13 +583,16 @@ fun DirectBrowserView(
                                 ): WebResourceResponse? {
                                     val reqUrl = request?.url?.toString() ?: return null
                                     if (reqUrl.startsWith("about:")) return null
+                                    val activePageUrl = latestCurrentUrl.ifBlank { reqUrl }
 
                                     return MediaCaptureEngine.shouldInterceptRequest(
                                         request = request,
-                                        baseUrl = currentUrl
+                                        baseUrl = activePageUrl
                                     ) { item ->
                                         DownloaderSession.addDiscoveredItem(item)
-                                        onMediaExtracted(item)
+                                        mainHandler.post {
+                                            latestOnMediaExtracted(item)
+                                        }
                                     }
                                 }
                             }
@@ -695,6 +631,139 @@ fun DirectBrowserView(
                             .background(MaterialTheme.colorScheme.surface)
                             .testTag("browser_empty_home_page")
                     )
+                }
+            }
+
+            // 3. Thumb-Reachable Bottom Browser Navigation & Discovered Media Bar
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 4.dp,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .testTag("browser_bottom_bar")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(
+                            onClick = { webViewInstance?.goBack() },
+                            enabled = canGoBack,
+                            modifier = Modifier.size(48.dp).testTag("browser_back_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = if (canGoBack) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { webViewInstance?.goForward() },
+                            enabled = canGoForward,
+                            modifier = Modifier.size(48.dp).testTag("browser_forward_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Forward",
+                                tint = if (canGoForward) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                currentUrl = ""
+                                addressInput = ""
+                                pageTitle = ""
+                                latestOnUrlChange?.invoke("")
+                                webViewInstance?.loadUrl("about:blank")
+                            },
+                            modifier = Modifier.size(48.dp).testTag("browser_home_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Home,
+                                contentDescription = "Home",
+                                tint = if (currentUrl.isBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { scanCurrentPageDOM(webViewInstance) },
+                            enabled = currentUrl.isNotBlank(),
+                            modifier = Modifier.size(48.dp).testTag("browser_scan_page_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TravelExplore,
+                                contentDescription = "Scan page for media",
+                                tint = if (currentUrl.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+                    }
+
+                    // Always-reachable Discovered Media pill button
+                    Surface(
+                        onClick = {
+                            focusManager.clearFocus()
+                            if (currentUrl.isNotBlank()) {
+                                scanCurrentPageDOM(webViewInstance)
+                            }
+                            onSwitchToMediaTab()
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (discoveredCount > 0) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        border = if (discoveredCount > 0) null else BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                        ),
+                        modifier = Modifier
+                            .heightIn(min = 42.dp)
+                            .padding(end = 4.dp)
+                            .testTag("browser_media_badge_top")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PermMedia,
+                                contentDescription = "Discovered media ($discoveredCount)",
+                                tint = if (discoveredCount > 0) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = if (discoveredCount > 0) "$discoveredCount" else "Media",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = if (discoveredCount > 0) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
