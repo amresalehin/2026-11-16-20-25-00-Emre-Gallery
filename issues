@@ -1,0 +1,65 @@
+Rewrite this Discovered-media sheet is unreachable in Browser
+Browser Homepage is Embded Deep. We will Keep A tile in Album Screen
+Discovered items are never cleared on navigation to a new page
+Discover Media is not mannual and optional. It runs automatically. We should make it mannual and optional.
+The files which comes in chunks do not actually show their parents names. So I can not actually know which is I am downloading.
+Major yt-dlp-supported hosts like v.redd.it, twitter.com/x.com (video fallback if gallery-dl fails), bilibili.com, kick.com, rumble.com, streamable.com, etc. are skipped by YtDlpProvider.
+DualMediaExtractor.kt:130-134), and download_media_file (gallery_dl_runner.py:638-640, 725) each hardcode different ~7–10 domain lists instead of querying
+Unbounded playlist/channel extraction: Opening a channel, profile, or large subreddit URL can stall extraction for minutes or OOM.
+Direct .m3u8 / .mpd stream gap when yt-dlp does not handle the URL:
+If browser interception captures a raw .m3u8/.mpd requiring specific session headers/referer that yt-dlp cannot re-extract from sourcePageUrl, MediaDownloadWorker passes sourcePageUrl first; if yt-dlp doesn't handle it, OkHttpDownloader explicitly rejects .m3u8/.mpd (OkHttpDownloader.kt:520-531), and MediaStreamMuxer has no direct FFmpegKit HLS/DASH remuxer (ffmpeg -headers ... -i <url> -c copy).
+False-positive rejections in isValidMedia (MediaClassifier.kt:40-43, 420-449):
+Rejects any URL containing "pixel" (e.g., google_pixel_photo.jpg), "/track" (e.g., /tracks/ or soundtrack.mp3), "/log", "/collect", or "/api/" (widely used by modern media CDNs/Mastodon/Pixiv/proxies).
+Aggressive deduplicationKey collisions (MediaClassifier.kt:896-925):
+.replace(Regex("""/(?:[a-z]_[a-zA-Z0-9_-]+,?)+/"""), "/") strips arbitrary path segments on non-Cloudinary URLs (e.g., /u_alice/photo.jpg and /u_bob/photo.jpg collapse into /photo.jpg).
+Strips generic query parameters f, s, fmt, format, w, h on all URLs, colliding unrelated files on PHP/CDN endpoints (e.g., download.php?f=1 vs download.php?f=2).
+classify() substring bugs (MediaClassifier.kt:1263-1420):
+Uses lower.contains(".mp4") / .contains(".webm") anywhere in the URL, misclassifying video.mp4.jpg or ?thumb=clip.mp4 as video, and misclassifying .webm audio without a mimeHint as video.
+Defaults all extensionless URLs (e.g., https://cdn.example.com/media/12345) to "JPEG" (IMAGES) without checking Content-Type via HEAD or probing headers.
+MediaCaptureEngine drops per-request headers & misses multi-source media (MediaCaptureEngine.kt):
+shouldInterceptRequest (:443-506) reads only Accept from request.requestHeaders and discards Origin, Authorization, Referer, and per-request Cookie headers (buildMediaItem hardcodes baseUrl headers).
+getJsDomScanScript (:117-125, 162, 191) uses script.innerText for JSON-LD (which can be empty on non-rendered <script> nodes, and ignores nested @graph arrays), picks only the first <video><source> even if lower quality, and captures only the first url(...) in CSS backgroundImage.
+_download_ytdlp_format hardcodes "continuedl": False and "overwrites": True, so paused/interrupted yt-dlp downloads always restart from 0%.
+OkHttpDownloader writes final files using item.id (gdl_0_<hash>.jpg, captured_0_...) instead of clean human-readable filenames, and does not deduplicate collisions cleanly.
+enqueueDownload and enqueueBatch call .get() synchronously on WorkManager ListenableFuture (:118, 214) directly from UI click handlers (DownloaderComponents.kt:1782), blocking the main thread.
+uniqueWorkName uses abs(dedupKey.hashCode()) (:114, 211), risking 32-bit hash collisions across distinct URLs.
+Batch downloads enqueue all items simultaneously with no concurrency limit/semaphore, risking HTTP 429 rate limits and OOMs when Python + FFmpegKit + OkHttp run concurrently.
+serializeHeaders (:60, 64) silently drops individual headers >2048 chars or total >4096 chars to fit WorkManager's 10KB Data limit—silently stripping large auth/Cloudflare Cookie headers.
+Auto-retry uses CoroutineScope.launch { delay(...) } (DownloadActivityManager.kt:547-557) rather than WorkManager backoff (Result.retry()), which is killed whenever Android terminates the app process.
+MediaInboxRepository (:46-171) and DownloadActivityManager (:136) serialize all stacks/activities as single JSON blobs in SharedPreferences, which scales poorly for large histories.
+Static Foreground Notification (MediaDownloadWorker.kt:59-73):
+createSilentForegroundInfo builds a static notification ("Downloading media") that is never updated via setForeground() with byte/percentage progress or a notification Cancel action.
+
+
+
+
+
+
+
+No Format / Quality / Codec Selection:
+select_yt_dlp_formats (gallery_dl_runner.py:365-414) hardcodes picking a single max quality format. Users cannot choose resolution (4K / 1080p / 720p / 480p / 360p), container/codec (MP4/H.264 vs WebM/VP9/AV1), or video-only vs audio-only before downloading.
+No Audio Extraction / Transcoding Pipeline:
+Although FFmpegKit is bundled (app/build.gradle.kts:79), there is no option to extract/convert video to audio (MP3, M4A, OPUS, FLAC) or set bitrate (128k/320k), nor to re-encode incompatible codecs (e.g., AV1/VP9) for device compatibility.
+No Output Customization (Templates & Destination Picker):
+Destination is hardcoded to Downloads/Emre Gallery (OkHttpDownloader.kt:287-288, GalleryDlEngine.kt:377-378). Missing SAF folder picker, filename templates (%(title)s, %(uploader)s, %(upload_date)s, %(id)s), subfolder-by-domain/uploader, or direct save-to-Vault/Custom-Album routing.
+No Downloader Settings Screen:
+SettingsScreen.kt:38-43 only has a link to open Media Downloader, with zero configurable downloader settings: no Wi-Fi-only / unmetered network toggle (NetworkType.UNMETERED), no max concurrent downloads limit, no bandwidth throttling (ratelimit), no proxy configuration, and no custom User-Agent or yt-dlp CLI arguments template.
+No Cookie / Auth Management UI:
+Missing Netscape cookies.txt import/export, per-site credential/cookie manager, and interactive browser-to-extractor login handoff (BrowserMediaExtractor runs invisibly at alpha = 0.001f and isClickable = false, so users cannot solve CAPTCHAs/2FA during extraction).
+
+Misleading "40 × 40" fallback dimension label (DownloaderComponents.kt:1860):
+item.resolutionHint ?: "40 × 40" displays "40 × 40" on every image/video whose dimensions are unknown, making high-res assets look like 40px thumbnails.
+Unexposed minKbInput filter (DownloaderComponents.kt:1018, 1101, 1548-1627):
+minKbInput defaults to "1" (filtering items < 1 KB), and Reset sets it back to "1", yet there is no input field or slider in the Dimension & Size Filter drawer to view or change it.
+Overly coarse dimension sliders (DownloaderComponents.kt:1592-1616):
+Slider(..., steps = 3) on 0f..3840f (Width) and 0f..2160f (Height) snaps strictly to 5 fixed values (e.g., 0, 960, 1920, 2880, 3840 for width and 0, 540, 1080, 1620, 2160 for height), making standard thresholds like 300px, 480px, 720px, or 1280px impossible to select.
+Hardcoded Light-Mode colors breaking Dark Theme (DownloaderComponents.kt:1423, 1550, 1707, 1884, 1965):
+DownloaderResultsPage and DownloaderMediaCard hardcode Color(0xFFF8F9FA), Color(0xFFF1F3F5), Color(0xFFE9ECEF), and Color(0xFF212529) instead of MaterialTheme.colorScheme tokens, creating white cards with dark text on dark surfaces and dark-on-dark empty states.
+Duplicate unused card component (MediaScraperDrawer.kt:65):
+RealScrapedCard remains in MediaScraperDrawer.kt with different styling/semantics while DownloaderResultsPage uses DownloaderMediaCard.
+
+
+No Subtitles, Chapters, Metadata Tagging, or SponsorBlock:
+Missing subtitle/CC downloading and embedding (writesubtitles, embedsubtitles, language selection), ID3/MP4 metadata & cover-art thumbnail embedding (FFmpegMetadata, EmbedThumbnail), .info.json metadata sidecars, and SponsorBlock segment removal.
+No Playlist / Channel / Batch Controls:
+Missing playlist preview/multi-select UI (with extract_flat fast listing), range/pagination controls (--playlist-items, gallery-dl --range), and duplicate-download archive tracking (download_archive across sessions).
